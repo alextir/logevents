@@ -62,13 +62,21 @@ public class LogReaderService {
 
     private Runnable process(final LogEventDTO logEventDTO) {
         return () -> {
-            /*  Steps:
-                1. try to insert start or finished, which comes first; insert timestamp into duration
-                2. on integrity constraint violation it means a STARTED/FINISHED already inserted before a FINISHED/STARTED for that id
-                    - then update existing id with missing info if comes into latest peer event (duration as abs(t1-t2), alert, etc)
-                obs: other sol like first select to check if id already exists & insert/update after is not 100 correct (eg when START/FINISHED processed
-                simultaneously by 2 parallel threads one can overwrite the other)
-            */
+        /*
+            Method steps:
+            1. try to insert start or finished, which comes first; insert timestamp into duration
+            2. on integrity constraint violation it means a STARTED/FINISHED already inserted before a FINISHED/STARTED for that id
+                - update existing id with missing info if comes into latest peer event (duration as abs(t1-t2), alert, etc)
+
+            Obs:
+            Other possible solutions:
+            - selecting first  to see if id already existd & insert/update after is not 100 correct (eg when START/FINISHED processed
+            simultaneously by 2 parallel threads one can overwrite other)
+            - keeping the event in memory and updating the state finis/start in memory; after that update db in batches more performant; drawback
+            here is half of the file can stay in memory worst case (in case files is good not memory wise)
+                eg of ids ordered like that in input file:  start(A B C) finish(C B A) keep half of event in memory
+            - using a broker eg kafka and keep events in topic & update a state store
+         */
 
             final TransactionTemplate transactionTemplateInsert = new TransactionTemplate(transactionManager);
             boolean inserted = false;
@@ -92,22 +100,6 @@ public class LogReaderService {
     }
 
     private boolean insert(final LogEventDTO logEventDTO) {
-        /*
-            Method steps:
-            1. try to insert start or finished, which comes first; insert timestamp into duration
-            2. on integrity constraint violation it means a STARTED/FINISHED already inserted before a FINISHED/STARTED for that id
-                - update existing id with missing info if comes into latest peer event (duration as abs(t1-t2), alert, etc)
-
-            Obs:
-            Other possible solutions:
-            - selecting first  to see if id already existd & insert/update after is not 100 correct (eg when START/FINISHED processed
-            simultaneously by 2 parallel threads one can overwrite other)
-            - keeping the event in memory and updating the state finis/start in memory; after that update db in batches more performant; drawback
-            here is half of the file can stay in memory worst case (in case files is good not memory wise)
-                eg of ids ordered like that in input file:  start(A B C) finish(C B A) keep half of event in memory
-            - using a broker eg kafka and keep events in topic & update a state store
-         */
-
         try {
             logEventRepository.insertEvent(logEventDTO.getId(), logEventDTO.getTimestamp().toEpochMilli(), logEventDTO.getType(), logEventDTO.getHost());
             log.info("event inserted: [{}]", logEventDTO);
